@@ -23,6 +23,11 @@ public:
     std::vector<StashItem> stashes() const;
     std::vector<std::string> showStash(const StashItem &item) const;
     std::vector<std::string> remotes() const;
+    std::vector<FileItem> files() const;
+    std::vector<std::string> blame(const std::string &path) const;
+    std::vector<std::string> grep(const std::string &term) const;
+    std::string rootPath() const;
+    std::string extractCommitHash(const std::string &line) const;
 
 private:
     std::string repoPath_;

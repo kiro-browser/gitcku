@@ -10,6 +10,7 @@ A native Objective-C++ terminal UI git client for macOS. It uses Foundation for 
 - Split-pane previews on wide terminals
 - Centered modal prompts for commit messages, filters, branch names, and confirmations
 - Cached previews for selected files, commits, branches, and stashes
+- File index and repository grep panels for IDE-like navigation
 
 ## Build
 
@@ -39,6 +40,8 @@ Or point it at a repository:
 - `4`: Branches
 - `5`: Stashes
 - `6`: Remotes
+- `7`: Files
+- `8`: Search
 - `?`: Help
 
 ## Keys
@@ -50,19 +53,27 @@ Or point it at a repository:
 - `/`: Filter the current view
 - `Esc`: Clear filter
 - `Enter`: Open selected file, commit, or stash details in the diff panel
+- `:`: Command palette
 - `Space`: Stage or unstage selected file
 - `a`: Stage all
 - `u`: Unstage all
 - `D`: Discard selected worktree change, after confirmation
 - `c`: Commit staged changes
+- `C`: Amend previous commit
 - `b`: Checkout selected branch
 - `n`: Create and checkout a new branch
+- `N`: Create and checkout a new branch from the selected commit
 - `m`: Merge selected branch into the current branch
+- `R`: Rebase the current branch onto the selected branch, after confirmation
+- `y`: Cherry-pick selected commit, after confirmation
 - `s`: Stash changes, including untracked files
 - `A`: Apply selected stash
 - `S`: Pop selected stash
 - `x`: Drop selected stash, after confirmation
 - `f`: Fetch all remotes and prune stale references
+- `F`: Search repository content with `git grep`
+- `B`: Blame selected file
+- `o`: Open selected file in `$EDITOR`
 - `p`: Push
 - `P`: Pull
 - `r`: Refresh

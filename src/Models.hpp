@@ -29,6 +29,11 @@ struct StashItem {
     std::string message;
 };
 
+struct FileItem {
+    std::string path;
+    bool tracked = true;
+};
+
 enum class Panel {
     Status,
     Diff,
@@ -36,6 +41,8 @@ enum class Panel {
     Branches,
     Stashes,
     Remotes,
+    Files,
+    Search,
     Help
 };
 

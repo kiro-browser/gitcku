@@ -3,6 +3,8 @@
 
 #import <Foundation/Foundation.h>
 
+#include <cctype>
+#include <set>
 #include <utility>
 
 static NSString *toNSString(const std::string &value) {
@@ -101,9 +103,8 @@ std::vector<std::string> Git::log() const {
 }
 
 std::vector<std::string> Git::showCommit(const std::string &line) const {
-    size_t pos = line.find_first_of("0123456789abcdef");
-    if (pos == std::string::npos) return {"Could not parse commit hash."};
-    std::string hash = line.substr(pos, 12);
+    std::string hash = extractCommitHash(line);
+    if (hash.empty()) return {"Could not parse commit hash."};
     GitResult result = run({"show", "--stat", "--patch", "--decorate", hash});
     std::vector<std::string> lines = splitLines(result.out.empty() ? result.err : result.out);
     if (lines.empty()) lines.push_back("No details for commit " + hash + ".");
@@ -151,4 +152,49 @@ std::vector<std::string> Git::remotes() const {
     std::vector<std::string> lines = splitLines(result.out.empty() ? result.err : result.out);
     if (lines.empty()) lines.push_back("No remotes configured.");
     return lines;
+}
+
+std::vector<FileItem> Git::files() const {
+    std::vector<FileItem> items;
+    std::set<std::string> seen;
+    GitResult tracked = run({"ls-files"});
+    for (const std::string &line : splitLines(tracked.out)) {
+        if (line.empty() || seen.count(line)) continue;
+        seen.insert(line);
+        items.push_back({line, true});
+    }
+    GitResult untracked = run({"ls-files", "--others", "--exclude-standard"});
+    for (const std::string &line : splitLines(untracked.out)) {
+        if (line.empty() || seen.count(line)) continue;
+        seen.insert(line);
+        items.push_back({line, false});
+    }
+    return items;
+}
+
+std::vector<std::string> Git::blame(const std::string &path) const {
+    GitResult result = run({"blame", "--date=short", "--", path});
+    std::vector<std::string> lines = splitLines(result.out.empty() ? result.err : result.out);
+    if (lines.empty()) lines.push_back("No blame data for " + path + ".");
+    return lines;
+}
+
+std::vector<std::string> Git::grep(const std::string &term) const {
+    GitResult result = run({"grep", "-n", "--heading", "--break", "--", term});
+    std::vector<std::string> lines = splitLines(result.out.empty() ? result.err : result.out);
+    if (lines.empty()) lines.push_back("No matches for " + term + ".");
+    return lines;
+}
+
+std::string Git::rootPath() const {
+    return trim(run({"rev-parse", "--show-toplevel"}).out);
+}
+
+std::string Git::extractCommitHash(const std::string &line) const {
+    size_t pos = line.find_first_of("0123456789abcdef");
+    if (pos == std::string::npos) return "";
+    size_t end = pos;
+    while (end < line.size() && std::isxdigit(static_cast<unsigned char>(line[end]))) end++;
+    if (end - pos < 7) return "";
+    return line.substr(pos, end - pos);
 }
