@@ -2,6 +2,15 @@
 
 A native Objective-C++ terminal UI git client for macOS. It uses Foundation for process execution, ncurses for the interface, and the system `git` binary for repository operations.
 
+## Interface
+
+- Framed terminal layout with a persistent repository header
+- Color-coded status and diff rows
+- Context-aware command strip for each panel
+- Split-pane previews on wide terminals
+- Centered modal prompts for commit messages, filters, branch names, and confirmations
+- Cached previews for selected files, commits, branches, and stashes
+
 ## Build
 
 ```sh

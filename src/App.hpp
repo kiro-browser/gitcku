@@ -24,6 +24,9 @@ private:
     std::string branch_;
     std::string message_;
     std::string filter_;
+    std::vector<std::string> preview_;
+    Panel previewPanel_ = Panel::Status;
+    int previewSelection_ = -1;
     int selected_ = 0;
     int scroll_ = 0;
 
@@ -34,9 +37,16 @@ private:
     void drawHeader(int cols);
     void drawTabs(int cols);
     void drawContent(int rows, int cols);
+    void drawPanelFrame(int y, int x, int h, int w, const std::string &title);
+    void drawList(int y, int x, int h, int w, const std::vector<ViewLine> &lines);
+    void drawPreview(int y, int x, int h, int w);
     void drawFooter(int rows, int cols);
+    std::vector<std::string> previewLines();
     std::vector<ViewLine> currentLines() const;
+    std::string commandHint() const;
+    std::string statusSummary() const;
     std::string panelName() const;
+    int colorForLine(const std::string &line, bool highlighted) const;
     bool handleKey(int ch);
     int lineCount() const;
     void moveSelection(int delta);

@@ -2,8 +2,10 @@
 #include "TextUtils.hpp"
 
 #include <algorithm>
+#include <cstdio>
 #include <locale.h>
 #include <ncurses.h>
+#include <sstream>
 #include <utility>
 
 App::App(std::string repoPath) : git_(std::move(repoPath)) {}
@@ -41,6 +43,9 @@ void App::setupCurses() {
     init_pair(4, COLOR_RED, -1);
     init_pair(5, COLOR_BLACK, COLOR_CYAN);
     init_pair(6, COLOR_MAGENTA, -1);
+    init_pair(7, COLOR_BLUE, -1);
+    init_pair(8, COLOR_WHITE, COLOR_BLUE);
+    init_pair(9, COLOR_BLACK, COLOR_GREEN);
 }
 
 void App::refreshAll() {
@@ -59,6 +64,8 @@ void App::switchPanel(Panel panel) {
     selected_ = 0;
     scroll_ = 0;
     if (panel != Panel::Diff) detail_.clear();
+    preview_.clear();
+    previewSelection_ = -1;
 }
 
 void App::draw() {
@@ -74,49 +81,125 @@ void App::draw() {
 }
 
 void App::drawHeader(int cols) {
-    attron(COLOR_PAIR(1) | A_BOLD);
-    mvprintw(0, 0, "gitcku");
-    attroff(COLOR_PAIR(1) | A_BOLD);
-    mvprintw(0, 8, "%s", shorten(git_.repoPath(), cols - 9).c_str());
-    attron(COLOR_PAIR(3));
-    mvprintw(1, 0, "branch: %s", shorten(branch_, cols - 10).c_str());
-    attroff(COLOR_PAIR(3));
-    std::string right = "[" + panelName() + "]";
-    mvprintw(1, std::max(0, cols - static_cast<int>(right.size()) - 1), "%s", right.c_str());
+    attron(COLOR_PAIR(8) | A_BOLD);
+    mvprintw(0, 0, "%-*s", cols, "");
+    mvprintw(0, 2, " gitcku ");
+    attroff(COLOR_PAIR(8) | A_BOLD);
+
+    attron(A_BOLD);
+    mvprintw(1, 2, "%s", shorten(git_.repoPath(), std::max(10, cols / 2)).c_str());
+    attroff(A_BOLD);
+    attron(COLOR_PAIR(3) | A_BOLD);
+    mvprintw(1, std::max(2, cols / 2), "branch %s", shorten(branch_, std::max(8, cols / 4)).c_str());
+    attroff(COLOR_PAIR(3) | A_BOLD);
+    attron(COLOR_PAIR(2));
+    mvprintw(1, std::max(2, cols - static_cast<int>(statusSummary().size()) - 2), "%s", statusSummary().c_str());
+    attroff(COLOR_PAIR(2));
+
     if (!filter_.empty()) {
         attron(COLOR_PAIR(6));
-        mvprintw(2, 0, "filter: %s", shorten(filter_, cols - 9).c_str());
+        mvprintw(2, 2, "filter: %s", shorten(filter_, cols - 11).c_str());
         attroff(COLOR_PAIR(6));
+    } else {
+        attron(COLOR_PAIR(7));
+        mvprintw(2, 2, "%s", shorten(commandHint(), cols - 4).c_str());
+        attroff(COLOR_PAIR(7));
     }
 }
 
 void App::drawTabs(int cols) {
-    std::string tabs = " 1 Status   2 Diff   3 Log   4 Branches   5 Stash   6 Remotes   ? Help ";
-    attron(A_REVERSE);
-    mvprintw(3, 0, "%-*s", cols, tabs.substr(0, cols).c_str());
-    attroff(A_REVERSE);
+    struct Tab { Panel panel; const char *label; };
+    std::vector<Tab> tabs = {
+        {Panel::Status, "1 Status"}, {Panel::Diff, "2 Diff"}, {Panel::Log, "3 Log"},
+        {Panel::Branches, "4 Branches"}, {Panel::Stashes, "5 Stash"},
+        {Panel::Remotes, "6 Remotes"}, {Panel::Help, "? Help"}
+    };
+    mvhline(3, 0, ACS_HLINE, cols);
+    int x = 2;
+    for (const Tab &tab : tabs) {
+        std::string label = std::string(" ") + tab.label + " ";
+        bool active = tab.panel == panel_;
+        if (active) attron(COLOR_PAIR(9) | A_BOLD);
+        else attron(COLOR_PAIR(7));
+        mvprintw(3, x, "%s", label.c_str());
+        if (active) attroff(COLOR_PAIR(9) | A_BOLD);
+        else attroff(COLOR_PAIR(7));
+        x += static_cast<int>(label.size()) + 1;
+        if (x >= cols - 8) break;
+    }
 }
 
 void App::drawContent(int rows, int cols) {
     std::vector<ViewLine> lines = currentLines();
     int top = 5;
-    int bottom = rows - 3;
+    int bottom = rows - 4;
     int height = std::max(0, bottom - top + 1);
-    clampScroll(height, static_cast<int>(lines.size()));
 
-    for (int i = 0; i < height; i++) {
+    bool split = cols >= 104 && rows >= 22 &&
+        (panel_ == Panel::Status || panel_ == Panel::Log || panel_ == Panel::Branches || panel_ == Panel::Stashes);
+    if (split) {
+        int leftW = std::max(42, cols * 45 / 100);
+        int rightW = cols - leftW - 3;
+        drawPanelFrame(top - 1, 1, height + 2, leftW, panelName());
+        drawPanelFrame(top - 1, leftW + 2, height + 2, rightW, "Preview");
+        drawList(top, 2, height, leftW - 2, lines);
+        drawPreview(top, leftW + 3, height, rightW - 2);
+    } else {
+        drawPanelFrame(top - 1, 1, height + 2, cols - 2, panelName());
+        drawList(top, 2, height, cols - 4, lines);
+    }
+}
+
+void App::drawPanelFrame(int y, int x, int h, int w, const std::string &title) {
+    if (h < 3 || w < 8) return;
+    attron(COLOR_PAIR(7));
+    mvaddch(y, x, ACS_ULCORNER);
+    mvhline(y, x + 1, ACS_HLINE, w - 2);
+    mvaddch(y, x + w - 1, ACS_URCORNER);
+    mvvline(y + 1, x, ACS_VLINE, h - 2);
+    mvvline(y + 1, x + w - 1, ACS_VLINE, h - 2);
+    mvaddch(y + h - 1, x, ACS_LLCORNER);
+    mvhline(y + h - 1, x + 1, ACS_HLINE, w - 2);
+    mvaddch(y + h - 1, x + w - 1, ACS_LRCORNER);
+    attroff(COLOR_PAIR(7));
+    attron(A_BOLD);
+    mvprintw(y, x + 2, " %s ", shorten(title, w - 6).c_str());
+    attroff(A_BOLD);
+}
+
+void App::drawList(int y, int x, int h, int w, const std::vector<ViewLine> &lines) {
+    clampScroll(h, static_cast<int>(lines.size()));
+    for (int i = 0; i < h; i++) {
         int lineIndex = scroll_ + i;
-        if (lineIndex >= static_cast<int>(lines.size())) break;
+        mvprintw(y + i, x, "%-*s", w, "");
+        if (lineIndex >= static_cast<int>(lines.size())) continue;
         bool highlighted = lines[lineIndex].selectable && lineIndex == selected_;
-        if (highlighted) attron(COLOR_PAIR(5));
-        mvprintw(top + i, 0, "%-*s", cols, shorten(lines[lineIndex].text, cols - 1).c_str());
-        if (highlighted) attroff(COLOR_PAIR(5));
+        int pair = colorForLine(lines[lineIndex].text, highlighted);
+        attron(COLOR_PAIR(pair) | (highlighted ? A_BOLD : 0));
+        std::string prefix = highlighted ? "> " : "  ";
+        mvprintw(y + i, x, "%-*s", w, shorten(prefix + lines[lineIndex].text, w).c_str());
+        attroff(COLOR_PAIR(pair) | (highlighted ? A_BOLD : 0));
+    }
+}
+
+void App::drawPreview(int y, int x, int h, int w) {
+    std::vector<std::string> lines = previewLines();
+    for (int i = 0; i < h; i++) {
+        mvprintw(y + i, x, "%-*s", w, "");
+        if (i >= static_cast<int>(lines.size())) continue;
+        int pair = colorForLine(lines[i], false);
+        attron(COLOR_PAIR(pair));
+        mvprintw(y + i, x, "%-*s", w, shorten(lines[i], w).c_str());
+        attroff(COLOR_PAIR(pair));
     }
 }
 
 void App::drawFooter(int rows, int cols) {
+    attron(COLOR_PAIR(8));
+    mvprintw(rows - 3, 0, "%-*s", cols, commandHint().substr(0, cols).c_str());
+    attroff(COLOR_PAIR(8));
     attron(A_REVERSE);
-    std::string keys = " q quit  r refresh  / filter  enter details  space stage  c commit  n branch  m merge  f fetch  P pull  p push ";
+    std::string keys = " q quit  r refresh  / filter  enter details  arrows/jk move  1-6 panels ";
     mvprintw(rows - 2, 0, "%-*s", cols, keys.substr(0, cols).c_str());
     attroff(A_REVERSE);
     move(rows - 1, 0);
@@ -126,6 +209,44 @@ void App::drawFooter(int rows, int cols) {
         mvprintw(rows - 1, 0, "%s", shorten(message_, cols - 1).c_str());
         attroff(COLOR_PAIR(2));
     }
+}
+
+std::vector<std::string> App::previewLines() {
+    if (previewPanel_ == panel_ && previewSelection_ == selected_ && !preview_.empty()) return preview_;
+    previewPanel_ = panel_;
+    previewSelection_ = selected_;
+    preview_.clear();
+
+    std::vector<ViewLine> lines = currentLines();
+    if (selected_ >= static_cast<int>(lines.size()) || lines[selected_].sourceIndex < 0) {
+        preview_ = {"No selection."};
+        return preview_;
+    }
+
+    if (panel_ == Panel::Status) {
+        const StatusItem &item = status_[lines[selected_].sourceIndex];
+        preview_.push_back(item.path);
+        preview_.push_back(item.staged ? "Index change" : "Worktree change");
+        preview_.push_back("");
+        std::vector<std::string> diff = git_.fileDiff(item);
+        preview_.insert(preview_.end(), diff.begin(), diff.end());
+    } else if (panel_ == Panel::Log) {
+        preview_ = git_.showCommit(log_[lines[selected_].sourceIndex]);
+    } else if (panel_ == Panel::Branches) {
+        const BranchItem &branch = branches_[lines[selected_].sourceIndex];
+        preview_ = {
+            branch.name,
+            branch.current ? "Current branch" : (branch.remote ? "Remote branch" : "Local branch"),
+            "",
+            "b checkout",
+            "m merge into " + branch_,
+            "n create branch"
+        };
+    } else if (panel_ == Panel::Stashes) {
+        preview_ = git_.showStash(stashes_[lines[selected_].sourceIndex]);
+    }
+    if (preview_.empty()) preview_.push_back("No preview.");
+    return preview_;
 }
 
 std::vector<ViewLine> App::currentLines() const {
@@ -181,6 +302,42 @@ std::string App::panelName() const {
         case Panel::Help: return "Help";
     }
     return "";
+}
+
+std::string App::commandHint() const {
+    if (panel_ == Panel::Status) return "space stage/unstage  enter inspect  a stage all  u unstage all  D discard  c commit";
+    if (panel_ == Panel::Diff) return "r refresh  1 status  3 log  enter opens detail from selectable panels";
+    if (panel_ == Panel::Log) return "enter show commit  / filter  g/G top/bottom";
+    if (panel_ == Panel::Branches) return "b checkout  n new branch  m merge selected  f fetch  P pull  p push";
+    if (panel_ == Panel::Stashes) return "s stash push  enter inspect  A apply  S pop  x drop";
+    if (panel_ == Panel::Remotes) return "f fetch --all --prune  P pull --ff-only  p push";
+    return "q quit  r refresh  / filter  esc clear filter  1-6 switch views";
+}
+
+std::string App::statusSummary() const {
+    int staged = 0;
+    int changed = 0;
+    int untracked = 0;
+    for (const StatusItem &item : status_) {
+        if (item.staged) staged++;
+        if (item.worktreeCode != " " && item.worktreeCode != "?") changed++;
+        if (item.indexCode == "?" && item.worktreeCode == "?") untracked++;
+    }
+    char buffer[96] = {0};
+    std::snprintf(buffer, sizeof(buffer), "%d staged  %d changed  %d untracked", staged, changed, untracked);
+    return buffer;
+}
+
+int App::colorForLine(const std::string &line, bool highlighted) const {
+    if (highlighted) return 5;
+    if (line.rfind("+", 0) == 0 && line.rfind("+++", 0) != 0) return 2;
+    if (line.rfind("-", 0) == 0 && line.rfind("---", 0) != 0) return 4;
+    if (line.find("[staged]") != std::string::npos) return 2;
+    if (line.find("[worktree] ??") != std::string::npos) return 4;
+    if (line.find("[worktree]") != std::string::npos) return 3;
+    if (line.rfind("commit ", 0) == 0 || line.find("* ") != std::string::npos) return 1;
+    if (line.find("@@") != std::string::npos) return 6;
+    return 0;
 }
 
 bool App::handleKey(int ch) {
@@ -251,14 +408,22 @@ std::string App::prompt(const std::string &label) {
     int rows = 0;
     int cols = 0;
     getmaxyx(stdscr, rows, cols);
+    int width = std::max(20, std::min(cols - 4, std::max(48, static_cast<int>(label.size()) + 34)));
+    int height = 5;
+    int y = std::max(1, rows / 2 - height / 2);
+    int x = std::max(1, cols / 2 - width / 2);
+    drawPanelFrame(y, x, height, width, "Input");
+    attron(A_BOLD);
+    mvprintw(y + 1, x + 2, "%s", shorten(label, width - 4).c_str());
+    attroff(A_BOLD);
+    mvhline(y + 3, x + 2, ACS_HLINE, width - 4);
+    move(y + 2, x + 2);
+    clrtoeol();
+    refresh();
     echo();
     curs_set(1);
-    move(rows - 1, 0);
-    clrtoeol();
-    attron(A_REVERSE);
-    mvprintw(rows - 1, 0, "%s", label.c_str());
-    attroff(A_REVERSE);
     char buffer[1024] = {0};
+    move(y + 2, x + 2);
     getnstr(buffer, sizeof(buffer) - 1);
     noecho();
     curs_set(0);
