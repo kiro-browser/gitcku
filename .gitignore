@@ -1,0 +1,9 @@
+# Build artifacts
+/build/
+
+# Claude workspace
+.claude
+.claude_cache*
+
+# Custom ignore lists
+.gitignores
